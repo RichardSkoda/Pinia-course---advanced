@@ -1,0 +1,225 @@
+Mutating State
+
+In the last lesson, we looked at how we can access state from Pinia and also how we can use v-model to bind to state properties in a Pinia store. Now let’s talk about mutating state.
+Mutating State
+
+Here’s where Pinia gets a bit… controversial. Pinia allows us to mutate state in a variety of ways, letting us decide where and when we want to update state in our application. Other state management libraries are much more strict about how state gets changed.
+
+For example, Vue’s former official state management library Vuex required state changes to be initiated by dispatching an action to commit a mutation—that was the only way to change state (unless you were breaking that pattern against recommended best practices).
+
+Pinia has gotten rid of standalone mutations altogether, giving us more options for how we choose to mutate state.
+Mutating Pinia State with Actions
+
+The most common way to mutate state using Pinia is to trigger an action in the store that causes the state to be changed.
+
+In this example, clicking the Add to Favorites button will trigger the addToFavorites action in the favorites store.
+
+📄 src/views/RestaurantView.vue
+
+<button @click="favoritesStore.addToFavorites(singleRestaurant.name)">
+ Add to Favorites ❤️
+</button>
+
+The addToFavorites action posts the favorite to the user’s favorites list.
+
+📄 src/stores/favorites.js
+
+import { defineStore } from "pinia";
+import { useAuthStore } from "./auth";
+import myFetch from "../helpers/myFetch";
+
+export const useFavoritesStore = defineStore("favorites", {
+  state: () => ({
+    userFavorites: [],
+  }),
+  actions: {
+    // This action mutates state by adding a favorite to userFavorites (that happens on the backend so the database is updated)
+    async addToFavorites(restaurant_name) {
+      const authStore = useAuthStore();
+      const username = authStore.user.username;
+      const body = {
+        user: username,
+        restaurant_name,
+      };
+      
+      // The user's favorite will be added to the database
+      myFetch("favorites", "POST", body).then((res) => {
+        return res;
+      });
+    }
+  },
+});
+
+When the post request reaches the endpoint in the server file, it runs more logic to post the favorite to the database (or in this case, the JSON file we created to represent a database).
+
+📄 /server.js
+
+app.post("/favorites", (req, res) => {
+  const favorites = JSON.parse(fs.readFileSync("./db/favorites.json"));
+  if (req.body) {
+    favorites.push(req.body);
+    fs.writeFileSync("./db/favorites.json", JSON.stringify(favorites, null, 4));
+    res.send(req.body);
+  } else {
+    res.sendStatus(400);
+  }
+});
+
+This was an example of a very common way to mutate state — by using an action.
+
+Some people are surprised when they find out this isn’t the only way to change Pinia state. In fact, I’ve heard of people claiming that using actions is the only way we can mutate state in Pinia. But that’s just not the case!
+Mutating State Directly
+
+We can also change state directly by assigning a new value to the state property.
+
+In the Search.vue component of our Pinia Restaurants app, there’s a watcher on the city value so that if the user deletes the city, we clear out the search data so they can start a new search.
+
+📄 src/components/Search.vue
+
+const { searchChoice, restaurantDetails} = storeToRefs(restaurantsStore);
+
+watch(city, (newVal) => {
+  if (newVal) {
+    restaurantDetails.value = [];
+    searchChoice.value = "";
+  }
+});
+
+The restaurantDetails and searchChoice properties are accessed from the restaurants store, and as we see here, these two properties get directly set to an empty array and an empty string when that city value changes. We aren’t required to mutate these state properties through a Pinia action. We can directly mutate state right here in the component.
+Updating state with $patch
+
+Another way we can set state is to use Pinia’s $patch method. This method lets us apply multiple changes at once to the store’s state.
+
+Here’s the same logic, but this time using $patch:
+
+📄 src/components/Search.vue
+
+watch(city, (newVal) => {
+  if (newVal) {
+    restaurantStore.$patch({
+      restaurantDetails: [],
+      searchChoice: "",
+    });
+  }
+});
+
+Here, we send an object with the changes we want to the restaurantDetails and searchChoice.
+
+If you don’t like the idea of mutating state directly in a component without an action, you could stick to using just actions and $patch to make changes to store data.
+
+It’s easy to search for “$patch” within your code or for actions by their name.
+
+But don’t forget that we always have devtools to help us track changes to state, so we might not need to be so strict by adding a self-imposed pattern like that for state mutation.
+
+Oh, and $patch is especially useful because it can take an object or a function as its parameter.
+
+Sometimes we might need to do more complicated logic to update state, such as using array methods to update a state property that is an array. Sending a function through the $patch method gives us more ability to do complex logic to mutate state.
+
+Example:
+
+restaurantsStore.$patch((state) => {
+  state.restaurantDetails.splice(0, state.restaurantDetails.length)
+  state.searchChoice = ""
+})
+
+Resetting state with $reset
+
+Conveniently, Pinia also offers a $reset method so we can reset a store’s entire state to its initial value.
+
+In this example, the $reset method is used within the store itself. Since this example is an Options Store, we can access the $reset method using this to clear out the user state of the auth store. This resets the user to an empty object.
+
+📄 src/stores/auth.js
+
+actions: {
+  logout() {
+    this.$reset();
+    router.push("/");
+  },
+  ...
+}
+
+We could also use $resetin a component:
+
+<button v-if="user && user.username" @click="authStore.$reset()">
+  Log Out
+</button>
+
+Using a reset function like this is really useful if we need to update an entire store at once, like when the user navigates to a certain page.
+
+Take a look at this example where we use Pinia’s reset method in the router.
+
+📄 src/router/index.js
+
+router.beforeEach((to) => {
+  const restaurantsStore = useRestaurantsStore();
+  if (to.name === "home") restaurantsStore.$reset();
+});
+
+Yep, we can access Pinia state in a router file. Here, if we wanted to reset all the restaurant information, clearing out a previous search when a user navigates back to the home page, we can call the $reset function anytime someone navigates back to the Homepage.
+A limitation of Setup stores
+
+Unfortunately, the $reset method isn’t available if we use a setup store.
+
+Here’s one example when options stores have an advantage over setup stores!
+
+This is because the $reset method relies on the state() function to create a fresh state, replacing the current store.$state with a new one. Since we don’t have that state() function in a setup store, Pinia doesn’t have a way to do this.
+
+// We have a state function in options stores
+state: () => ({
+    userFavorites: [],
+})
+
+However, this might be a good opportunity for creating a Pinia plugin (we’ll talk more about those in the next lesson).
+
+Another possibility would be to just create our own reset method for an individual store.
+
+For example, we could create an Action that serves the purpose of resetting our entire store. Here’s how that could look, with a resetRestaurantsStore action to clear out each state property in the restaurants store, resetting the store to its original state. We would only need to use this if our store is a setup store and we’re needing a function to reset the entire state.
+
+📄 src/stores/restaurants.js
+
+//action in a setup store
+
+function resetRestaurantsStore() {
+    searchChoice.value = "";
+    restaurantDetails.value = [];
+    singleRestaurant.value = {};
+    textSearchResults.value = [];
+    loading.value = false;
+}
+
+Clarity through Devtools
+
+These are just some of the ways we can access and mutate state with Pinia. While it might seem like a lot, keep in mind that the devtools support is excellent.
+
+We are able to see each state property and getter update in the Pinia devtools panel, and we see which store they belong to.
+
+Screen Shot 2023-01-03 at 2.21.33 PM.png
+
+And we can see every action and patch occur if we check the timeline panel.
+
+Screen Shot 2023-01-03 at 2.22.58 PM.png
+$onAction
+
+As we wrap up this lesson, let’s focus on one last tool. Pinia also offers a helpful method that we can use to get very detailed info about actions: the $onAction method.
+
+As you can see, this method has a number of hooks we can use to perform some logic when a certain action happens.
+
+store.$onAction(({ name, store, args, after, onError }, state) => {
+  // ...
+})
+
+Note how we can pass in state as a second argument, in case we need it.
+
+Here it is used to log information about which Action has been triggered in the auth store.
+
+src/App.vue
+
+authStore.$onAction(({ name, store, args }) => {
+  console.log(`Start "${name}" with params [${args.join(", ")}].`);
+});
+
+In the console, when the user logs in with the username ‘srodg’ and the password ‘pw’, we see that logged. And we see that logging out takes no params.
+
+Screen Shot 2023-01-03 at 2.29.02 PM.png
+
+But we would probably rarely need to use the console to log this information, since we have it all in devtools.

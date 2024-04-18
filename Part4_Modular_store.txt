@@ -1,0 +1,223 @@
+Modular Stores
+
+One of the most important features of Pinia is its modular stores. When using Pinia, we create a store focused around each logical concern of our app.
+
+In fact, we can define as many stores as we want. Each of them should be in their own file, which will help keep our code organized and also connect each separate store to devtools so we can easily track state from each store.
+
+Sometimes it’s more obvious when a store should be created. Other times it’s hard to know when to break bigger stores up into to distinct stores. First, let’s look at a more straightforward example.
+Authentication Store Example
+
+In our example project, a user can register an account, login, and logout. These actions are all related to the state of the user.
+
+Throughout the application, the user interface will change depending on if a user is logged in. For example, if they are logged in, we’ll show their name and a link to their favorites in the navbar.
+
+Screen Shot 2022-12-30 at 3.40.48 PM.png
+
+The user state is what we need to keep track of, and the actions related to that—register, login, logout—can all be held in the same store file. We could call this the authentication store or the user store.
+
+📄 src/stores/auth.js
+
+export const useAuthStore = defineStore("auth", {
+  state: () => ({
+     user: ref({}),
+  }),
+
+// actions, etc
+
+});
+
+Creating a store around the same logical concern of authentication is a common use case for a Pinia store, and it’s pretty straightforward. But it’s not always that clear how we should be logically dividing up our other stores.
+
+Now, let’s look at a less straightforward example.
+More complex store-ganization
+
+In the Pinia Restaurants app, there is a search bar with two inputs.
+
+The first input takes in a city location.
+
+The second input takes in a search term to find related restaurants, for example pizza, sushi, ice cream, etc.
+
+Screen Shot 2022-12-30 at 3.44.05 PM.png
+
+Both inputs have event listeners that trigger a function when the user types in text. Each function makes a call to the Google Maps API.
+
+    City: calls for the latitude and longitude of the location typed in by the user
+    Search: uses the inputed location to return only restaurants within a certain proximity
+
+In other words: both the city and search inputs are utilizing **location data and both are using the Google Maps API.
+
+So should they be combined within the same store? A googleMaps store, perhaps?
+
+Well, there are quite a few actions in this project that rely on the Google Maps API. So that’s a lot of code in just one store…
+
+And more importantly, the actions aren’t all related to the same logical concerns.
+
+We could break it down to focus more on what the Google Maps API is being used to do.
+
+Why don’t we try to focus on the state data? Which data do we need to track? What is the data being used for?
+❔ Ask yourself: What does the state data relate to? Can it be grouped around a logical concern?
+
+Some of the state data we need is related to location — getting the latitude and longitude of the city input value. This is data used to make geolocation requests.
+
+Screen Shot 2023-01-12 at 1.05.11 PM.png
+
+Other state data we need is related to restaurants — the list of restaurants that match the search term (and their details: name, address, rating, reviews, etc) within a certain distance of the city.
+
+In other words, this state is the information we want to present to the user about the restaurants.
+
+Screen Shot 2023-01-12 at 1.07.31 PM.png
+
+Screen Shot 2023-01-12 at 1.08.50 PM.png
+
+Based on this reasoning, it sounds like we can make two stores with their own shared logical concerns:
+
+    Geolocation.js
+    Restaurants.js
+
+But what about…
+
+In the restaurants store, there is a request to get a list of relevant restaurants, and it requires the use of geolocation data so we get restaurants within a certain geographical area. We need to use data from the geolocation store in the restaurants store.
+
+Does this completely ruin our approach to creating separate stores? Not at all!
+Nested Stores
+
+We can share state between two stores if needed. We call this Nested Stores.
+
+An important detail to remember about nested stores is that the way we use nested stores (sharing data, actions, and getters between stores) will depend on which type of store we choose to use: an options store or a setup store.
+Nested Setup Stores
+
+In a setup store, we can import and call the useStore() function at the top of the store function.
+
+📄 src/stores/restaurants.js
+
+import { ref } from "vue";
+import { defineStore } from "pinia";
+import myFetch from "../helpers/myFetch";
+import { useGeoLocationStore } from "./geolocation";
+
+export const useRestaurantsStore = defineStore("restaurants", () => {
+  const locationStore = useGeoLocationStore(); // This has to be inside the setup function
+  const searchChoice = ref("");
+  const restaurantDetails = ref([]);
+  const singleRestaurant = ref({});
+  const textSearchResults = ref([]);
+  const loading = ref(false);
+
+  // get list of relevant restaurants
+  async function getRestaurants() {
+    loading.value = true;
+    restaurantDetails.value = []; // reset to empty
+
+    const lat = locationStore.latitude || locationStore.coords.value.latitude;
+    const long =
+      locationStore.longitude || locationStore.coords.value.longitude;
+    const search = searchChoice.value;
+    const body = { lat, long, search }; // uses data from locationStore to make this request
+    myFetch("find-restaurant", "POST", body)
+      .then((res) => {
+        loading.value = false;
+        textSearchResults.value = res.response.value;
+        return res;
+      })
+      .then((result) => {
+        for (let i = 0; i < result.response.value.results.length; i++) {
+          const restaurant = result.response.value.results[i];
+          getRestaurantDetails(restaurant.place_id);
+        }
+      });
+  }
+
+  // get rating, reviews, other info about each place (using Google Maps place_id)
+  async function getRestaurantDetails(place_id) {
+    const body = { place_id };
+    myFetch("restaurant-details", "POST", body).then((res) => {
+      restaurantDetails.value.push(res.response.value.result);
+    });
+  }
+
+  // get single place for individual restaurant page
+  function getSingleRestaurantDetails(place_id) {
+    if (restaurantDetails.value.length) {
+      const foundPlace = restaurantDetails.value.find((x) => {
+        return x.place_id === place_id;
+      });
+      if (foundPlace) {
+        singleRestaurant.value = foundPlace;
+      } else {
+        const body = { place_id };
+        myFetch("restaurant-details", "POST", body).then((res) => {
+          singleRestaurant.value = res.response.value.result;
+        });
+      }
+    } else {
+      const body = { place_id };
+      myFetch("restaurant-details", "POST", body).then((res) => {
+        singleRestaurant.value = res.response.value.result;
+      });
+    }
+  }
+
+  function resetRestaurantsStore() {
+    searchChoice.value = "";
+    restaurantDetails.value = [];
+    singleRestaurant.value = {};
+    textSearchResults.value = [];
+    loading.value = false;
+  }
+
+  return {
+    searchChoice,
+    getRestaurants,
+    textSearchResults,
+    restaurantDetails,
+    getSingleRestaurantDetails,
+    singleRestaurant,
+    getRestaurantDetails,
+    loading,
+    resetRestaurantsStore,
+  };
+});
+
+Nested Options Stores
+
+Alternatively, in an options store, we’ll need to import and call the useStore() function within the action or getter where we need access to the store.
+
+To see that in use, we can peek inside the favorites store of our example app’s code:
+
+📄 src/stores/favorites.js
+
+import { defineStore } from "pinia";
+import { useAuthStore } from "./auth";
+import myFetch from "../helpers/myFetch";
+
+export const useFavoritesStore = defineStore("favorites", {
+  state: () => ({
+    userFavorites: [],
+  }),
+  actions: {
+    async getFavorites() {
+      // options store must use this within the action where it is needed
+      const authStore = useAuthStore();
+~~~~
+      // logic to get favorites
+      myFetch("favorites").then((res) => {
+        const userFav = res.response.value.favorites.filter((x) => {
+          return x.user === authStore.user.username; // user from authStore
+        });
+
+        this.userFavorites = userFav;
+      });
+      });
+    },
+
+As you can see, the setup store wins again for being just slightly more convenient. Once you’ve imported that store and called the useStore() function, you can use it in any of your actions and getters within that store function.
+Wrapping things up
+
+Let’s wrap up by thinking about the important takeaways from this lesson:
+
+    Modular stores will keep our project more organized.
+    Create stores around logical concerns. Look at the state data that you are tracking. Related state properties mean that we could create a separate store to track those properties. We can also think about a specific feature of the app; maybe we would create a store around that feature if it makes sense.
+    Don’t assume that you should automatically create a store around one API or one library you are using. Those tools might be used for separate logical concerns in your application.
+    We can share data, actions and getters between stores with nested stores.
+
+In the next lesson, we’ll take a look at how we can use Pinia to manage global state: how we access it, how we mutate it, and how we use it with Vue reactivity features.

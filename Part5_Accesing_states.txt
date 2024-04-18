@@ -1,0 +1,146 @@
+Accessing State
+
+In these next two lessons, we’re going to talk about probably the most important topic of Pinia: state!
+
+Other state management libraries tend to be more prescriptive than Pinia, forcing developers to access and mutate their state in a specific way. This can lead to unnecessary overhead and limiting rigidity.
+
+By allowing developers to make their own choices about the patterns they use, Pinia gives us flexibility. Of course, this can be simultaneously freeing and intimidating.
+
+If you’re used to a strict data flow (such as state changes only being made by actions within a store) then you might feel out of your comfort zone.
+
+In this lesson, we’ll talk about how we can implement our own patterns if our project requires a stricter approach to changing state, but first, let’s take a look at how we access and change state.
+Accessing Pinia State
+
+First, how do we access state?
+Inside A Store
+
+If we are within a store itself, we have access to state properties in our actions and getters, but there are some things to keep in mind, as things are different within an options vs setup store.
+
+In an Options Store, within our actions we will access state using this
+
+actions: {
+  async login(username, password) {
+    const body = { username, password };
+    myFetch("login", "POST", body).then((res) => {
+      // accessing state with this.user
+      this.user = res.response.value.user
+    });
+  },
+}
+
+Within a getter in an Options Store, we must pass in the state to our getter to be able to access it:
+
+getters: {
+  // pass in the state
+  userFirstName: (state) => {
+    if (state.user) {
+      return (
+        state.user.name.charAt(0).toUpperCase() + state.user.name.slice(1)
+      );
+    }
+  },
+},
+
+In a Setup Store for both actions and getters, we access the state property directly, just as we would within the setup function in a component using script setup syntax — we do not use this.
+
+In this example, the state property is a ref, so it’s written as city.value
+
+📄 src/stores/geolocation.js
+
+export const useGeoLocationStore = defineStore("geolocation", () => {
+    //state
+    const city = ref("");
+
+    // getters
+    const loadingMessage = computed(() => {
+      if (!city.value) {
+        return "Loading your city...";
+      }
+    });
+    // actions
+      ...
+
+    return {
+       city,
+      };
+  }
+);
+
+Inside a Component
+
+We can access a store’s state from a component in a few ways.
+
+The most common way is to import the store into the Vue component and then invoke the useStore function.
+
+📄 src/views/RestaurantView.vue
+
+<script setup>
+import { useFavoritesStore } from "../stores/favorites";
+const favoritesStore = useFavoritesStore();
+</script>
+
+This lets us read and write to state using dot notation to access the state property on the store:
+
+📄 src/views/RestaurantView.vue
+
+function addRestaurant() {
+  favoritesStore.userFavorites.push(restaurant);
+}
+
+However, using dot notation can become burdensome if we’re using a lot of different state properties in a component. We can make our lives easier by destructuring state properties from the store so that we don’t have to write the full store name for every state property. But we have to be careful how we do this.
+
+Our first instinct might be to do something like this:
+
+const { userFavorites } = favoritesStore
+
+But this won’t work. The userFavorites property would lose reactivity.
+
+To those of you who have worked in Vue 3, this problem might seem familiar. In Vue 3, we can’t destructure props unless we use a helper method called toRefs. And in Pinia, we can’t destructure state properties unless we use a Pinia helper method called storeToRefs.
+
+Here’s how we use storeToRefs to destructure state properties from the store:
+
+const favoritesStore = useFavoritesStore();
+const { userFavorites } = storeToRefs(favoritesStore);
+
+This helper ensures state properties keep reactivity, and it makes life easier so we don’t have to use dot notation every time we want to access state.
+V-Model
+
+We can use v-model to bind to Pinia state properties just as we would anywhere else in a Vue app: We access the store’s state property directly.
+
+This example is the city input, where a user types in the city they want to search for restaurants in.
+
+📄 src/components/Search.vue
+
+<script setup>
+import { useGeoLocationStore } from "../stores/geolocation";
+const geoLocationStore = useGeoLocationStore();
+const { city } = storeToRefs(geoLocationStore);
+  
+...
+</script>
+
+// v-model syncs the input value with the geolocation store as the user types in a different city
+<template>
+  <div>
+    <label for="search-city">City:</label>
+    <input v-model="city" placeholder="'Loading your city...'" />
+  </div>
+  
+  ...
+</template>
+
+In the geolocation store, there is a watcher that will trigger a function when this city value changes.
+
+📄 src/stores/geolocation.js
+
+watch(
+  () => city.value, (newValue) => {
+      if (newValue) {
+        getLatLong(newValue);
+      }
+    }
+);
+
+We could check this out in the devtools and see how the state instantly reacts. As you type, the city value (bound to the input by v-model) updates, and the watcher triggers the getLatLong function, which updates the other state properties with address details.
+
+V-model allows us to access store state directly, and it also lets us mutate it.

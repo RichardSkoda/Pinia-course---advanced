@@ -1,0 +1,322 @@
+Pinia Plugins
+
+We’ll finish up this course by taking a look at an important tool that can help us expand Pinia’s functionality: plugins.
+
+A plugin is a way to extend an API so that it can do things beyond what comes out-of-the box. It’s impossible to anticipate every possible need that a developer working with Pinia will have, but since we can create plugins, we are able to add on to Pinia so that it can meet our needs even better.
+When to write a plugin
+
+If we have logic that we want to reuse, such as a utility function that helps to validate that a date is in a correct format, we can create composables to do that.
+
+But if the functionality we need is dependent on Pinia itself, then we might need to write a Pinia plugin.
+
+We can create a plugin function that gives more functionality to Pinia:
+
+export function myPiniaPlugin() {
+  // do something to extend Pinia in some way
+}
+
+And then we tell Pinia to use the plugin by passing it to our Pinia instance in the main.js file with pinia.use()
+
+pinia.use(myPiniaPlugin)
+
+Pinia does something helpful for us when it adds the plugin to our Pinia instance. When we add a plugin with .use(), Pinia also takes the opportunity to add extra information about our Pinia instance and our app that could be helpful to us. This is called the context.
+
+Pinia assigns the context object to our plugin so we can access all the properties we might need when building more functionality onto Pinia.
+
+export function myPiniaPlugin(context) {
+  context.pinia // the pinia instance created with `createPinia()`
+  context.app // the current app created with `createApp()` (Vue 3 only)
+  context.store // the store the plugin is augmenting
+  context.options // the options object defining the store passed to `defineStore()`
+  // ...
+} 
+
+When it comes to creating our own plugins, the sky is really the limit. But for today, let’s take a look at three useful patterns for creating one:
+
+    A plugin to add a property or method to a store
+    A plugin that runs when a mutation or event occurs
+    A plugin that adds a new option to the store (such as state, actions, getters, ourPlugin)
+
+Add a property or method to a store
+
+We can add a property to the store by writing a simple plugin that returns a message property.
+
+📄 main.js
+
+function pluginProperty() {
+  return {
+    message: "Just a simple string",
+  };
+}
+
+pinia.use(pluginProperty);
+
+Note how we’re in main.js, and telling Pinia to use() the plugin we just created.
+
+Similarly, we can use a plugin to add a method to a store.
+
+Keep in mind that we have access to that context argument if we need it. So let’s write a simple plugin that returns a function that console.logs the context object.
+
+This time, we’ll write the plugin inside of a new file within a plugins directory in our project’s stores directory.
+
+📄 /stores/plugins/pluginMethod.js
+
+function pluginMethod(context) {
+  return {
+    logContext: function () {
+      console.log(context);
+    },
+  };
+}
+
+Then we’ll need to import that plugin and tell Pinia to use it:
+
+📄 main.js
+
+// import the plugin from ./stores/plugins
+
+pinia.use(pluginMethod);
+
+Now that this plugin’s method is available to Pinia, let’s use it in the auth store, logging the context object whenever someone authenticates into our app.
+
+📄 src/stores/auth.js
+
+async login(username, password) {
+  this.logContext(); // here's the method from the plugin    
+  const body = { username, password };
+  myFetch("login", "POST", body).then((res) => {
+  this.user = res.response.value.user
+  });
+},
+
+In devtools, we can see the property and the method are available in the store in the customProperties section.
+
+We can use them in our stores as needed.
+
+Screen Shot 2023-01-17 at 8.47.59 PM.png
+Plugin to run when a Mutation or Action occurs
+
+Now let’s take a look at how we can write a plugin that relies on the Pinia API.
+$subscribe
+
+In this first example, we’ll write a plugin that uses Pinia’s $subscribe helper method.
+
+The $subscribe method is similar to Vue’s watch . We can use it to subscribe to, or watch for, mutations, so that when a particular mutation occurs, we can perform a side effect.
+
+In this example, we are going to subscribe to mutations in the auth store. We want to know if the owner of the website logs in. If she does, we’ll trigger an alert to greet that owner.
+
+📄 greetOwnerPlugin.js
+
+export function greetOwnerPlugin(context) {
+  context && context.store.$subscribe((mutation, state) => {
+    if (mutation.storeId === "auth") {
+      if (state.user && state.user.username === "srodg") {
+        alert("The owner is logged in.");
+      }
+    }
+  });
+}
+
+We use, or extend Pinia with the plugin in the main.js file:
+
+📄 main.js
+
+pinia.use(greetOwnerPlugin);
+
+A plugin will run anytime a store is created, so this will run whenever the auth store is created, but it will also run whenever the three other stores in our project are created (geolocation store, favorites store, and restaurants store). However, we only care about the mutations in the auth store.
+
+The $subscribe method gives us access to the mutation by its storeId, so we can tell the plugin to just send an alert when the relevant action in the auth store occurs.
+
+Now when I log in, the app greets me with the alert (since I am the owner!).
+
+Screen Shot 2023-01-09 at 6.43.58 PM.png
+
+While this alert feature is a bit contrived, we could extend this plugin to run a specific Action only when an admin of the site logs in, like to fetch some protected data.
+Using $onAction in Plugins
+
+We’ve already seen the $onAction helper method in this course. When it comes to Pinia plugins, we can use $onAction to achieve special behavior with Actions, such as:
+
+    Run code before an Action runs
+    Run code after an Action has run
+    Run code when an Action fails
+    Cancel an Action
+
+Let’s write a plugin that uses $onAction to do something depending on if a user logs in, logs out, or registers.
+
+In this example, the $onAction method watches all Pinia actions, and if one occurs in the auth store, it checks which Action it is. Based on that action, it will send an alert.
+
+📄 greetUserPlugin.js
+
+export function greetUserPlugin({ store }) {
+  store.$onAction((action) => {
+    if (store.$id === "auth") {
+      switch (action.name) {
+        case "login":
+          alert("Welcome back to Pinia Restaurants!");
+          break;
+        case "logout":
+          alert("Hope you enjoyed Pinia Restaurants!");
+          break;
+        case "register":
+          alert("Welcome to Pinia Restaurants!");
+          break;
+      }
+    }
+  });
+}
+
+Now let’s test it out in the browser.
+Adding the after hook
+
+To take this plugin a bit further, we could even use the after hook to make sure the alert appears only once the Action is completed. In the example below, we deconstruct the name and method off of the context object.
+
+📄 greetUserPlugin.js
+
+export function greetUserPlugin({ store }) {
+  store.$onAction(({ name, after }) => { // deconstruct off context obj
+    if (store.$id === "auth") {
+      switch (name) {
+        case "login":
+          after(() => {
+            alert("Welcome back to Pinia Restaurants!");
+          });
+          break;
+        case "logout":
+          after(() => {
+            alert("Hope you enjoyed Pinia Restaurants!");
+          });
+          break;
+        case "register":
+          after(() => {
+            alert("Welcome to Pinia Restaurants!");
+          });
+          break;
+      }
+    }
+  });
+}
+
+An Elegant Use Case
+
+Another cool use case for $onAction is this elegant solution presented by Eduardo San Martin Morote, creator of Pinia.
+
+📄 main.js
+
+export function ({ store }) => {
+  store.$onAction(({ name, store, args, after, onError }, state) => {
+    onError(error => {
+      sendErrors(name, args, error)
+    })
+  })
+})
+
+This plugin can be used to take errors that happen within Actions, and send them to an external service that you use, such as Sentry. This is super helpful to detect bugs during production.
+Add an Option to the Store
+
+The last pattern we’ll look at is an interesting one because it allows us to send data from a store directly to a plugin.
+
+We can add an option to a store. When I say “option” in relation to Vue, I mean properties available on the Vue instance, such as data , computed, and methods in the Options API.
+
+Or in a Pinia options store, the options refer to state, getters, or actions.
+
+If we create our own option in a Pinia store, we can add properties to that option.
+
+📄 src/stores/auth.js
+
+export const useAuthStore = defineStore("auth", {
+  state: () => ({
+    // ... 
+  }),
+  getters: {
+    // ...
+  },
+  actions: {
+    // ...
+  },
+  greeting: {
+    enabled: true,
+  },
+});
+
+In the example, the option we have created is called greeting. We’re adding a property called enabled so that we can send either true or false to the plugin. Based on that boolean, we will turn the plugin on or off.
+
+Here is how that plugin could be constructed:
+
+📄 stores/plugins/greetUserPlugin.js
+
+export function greetUserPlugin({ store, options }) {
+  if (options.greeting && options.greeting.enabled) {
+    store.$onAction((action) => {
+      switch (action.name) {
+        case "login":
+          alert("Welcome back to Pinia Restaurants!");
+          break;
+        case "logout":
+          alert("Hope you enjoyed Pinia Restaurants!");
+          break;
+        case "register":
+          alert("Welcome to Pinia Restaurants!");
+          break;
+      }
+    });
+  }
+}
+
+The if statement if (options.greeting && options.greeting.enabled) relies on the enabled property being set to true.
+
+If it’s set to false, the plugin won’t run the logic, so the $onAction method will not watch every Pinia action.
+
+We could set properties in the option for any data we want our plugin to be able to use.
+Adding an Option to Setup Stores
+
+By the way, we can also create options for Pinia plugins in a setup store. We do that by adding the option as a third argument when writing the setup function for the store:
+
+📄 src/stores/auth.js
+
+defineStore('auth',() => {...},
+  {
+    greeting: {
+      enable: true,
+    },
+  }
+)
+
+A handy open source plugin
+
+As you can imagine, this has a lot of potential to be useful when developing open source plugins for other Vue developers using Pinia.
+
+There are really so many possibilities for what we can do by creating our own plugins. The Vue open source community is starting to create useful plugins that are being shared, so keep an eye out for exciting enhancements developers will build.
+
+For example, let’s look at the simple but effective public plugin called pinia-plugin-persistedstate.
+
+As it sounds, it’s a Pinia plugin that enables us to persist our state despite a browser refresh.
+
+To make use of it, we’d install it into our project.
+
+npm : npm i pinia-plugin-persistedstate
+yarn : yarn add pinia-plugin-persistedstate
+
+Then import it into main.js and tell Pinia to use it.
+
+📄 main.js
+
+import { createPinia } from 'pinia'
+import piniaPluginPersistedstate from 'pinia-plugin-persistedstate'
+
+const pinia = createPinia()
+pinia.use(piniaPluginPersistedstate)
+
+We then need to make sure to add the persist:true option to the store we want to be persisted:
+
+import { defineStore } from 'auth'
+
+export const useAuthStore = defineStore('auth', {
+  state: () => {
+    return {
+      someState: 'hello pinia',
+    }
+  },
+  persist: true,
+})
+
+As you can see in the browser, now our state is being persisted.
